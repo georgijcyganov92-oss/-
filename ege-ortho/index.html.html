@@ -1,0 +1,157 @@
+<script src="js/storage.js"></script>
+<script src="js/brain.js"></script>
+
+<script>
+    // 1. ПОЛУЧАЕМ РЕАЛЬНЫЕ ДАННЫЕ ИЗ ХРАНИЛИЩА
+    const historyData = Storage.getHistory();
+    const prePriAnalysis = Brain.processStats(historyData);
+
+    // 2. ФОРМИРУЕМ ОБЪЕКТ userStats
+    const userStats = {
+        targetScore: 90,
+        lastAnswers: historyData.length, // Берем реальное кол-во ответов
+        topics: [
+            { 
+                id: 10, 
+                shortName: "ПРЕ/ПРИ", 
+                fullName: "Задание 10: ПРЕ/ПРИ", 
+                score: prePriAnalysis.count > 0 ? prePriAnalysis.score : 48, // Если данных нет, оставим 48
+                stability: prePriAnalysis.count > 0 ? prePriAnalysis.stability : 42, 
+                weight: 1.5, 
+                change: +14, 
+                reason: "Выгодная зона для добивания" 
+            },
+            { id: 16, shortName: "Пунктуация", fullName: "Задание 16: Пунктуация", score: 32, stability: 24, weight: 2.0, change: -5, reason: "Главный рычаг роста сейчас" },
+            { id: 11, shortName: "Суффиксы", fullName: "Задание 11: Суффиксы", score: 91, stability: 88, weight: 1.2, change: +2, reason: "Сильная зона" },
+            { id: 12, shortName: "Глаголы", fullName: "Задание 12: Глаголы", score: 65, stability: 55, weight: 1.8, change: -2, reason: "Укрепит прогноз по орфографии" }
+        ]
+    };
+
+    // 3. ВСЯ ОСТАЛЬНАЯ ЛОГИКА (БЕЗ ИЗМЕНЕНИЙ)
+    const BrainLogic = { // Переименовал, чтобы не конфликтовать с файлом brain.js
+        getPriority(topic) {
+            const weakPart = (100 - topic.score) / 100;
+            const stabilityPart = (100 - topic.stability) / 100;
+            return weakPart * topic.weight * (1 + stabilityPart);
+        },
+
+        getStatus(score) {
+            if (score < 35) return { label: 'Критично', class: 's-critical', color: 'var(--critical)' };
+            if (score < 55) return { label: 'Риск', class: 's-risk', color: 'var(--warning)' };
+            if (score < 75) return { label: 'Нестабильно', class: 's-unstable', color: '#eab308' };
+            if (score < 90) return { label: 'Уверенно', class: 's-confident', color: 'var(--success)' };
+            return { label: 'Сильная зона', class: 's-perfect', color: 'var(--perfect)' };
+        },
+
+        calculateWeightedForecast(stats) {
+            let totalWeight = 0;
+            let weightedScore = 0;
+            stats.topics.forEach(t => {
+                const realExpectation = t.score * (0.85 + (t.stability / 100) * 0.15);
+                weightedScore += realExpectation * t.weight;
+                totalWeight += t.weight;
+            });
+            const base = weightedScore / totalWeight;
+            return { 
+                min: Math.round(base - (4 + (1 - base/100) * 4)), 
+                max: Math.round(base + (2 + (base/100) * 4)) 
+            };
+        },
+
+        getSystemRisk(topics) {
+            const critCount = topics.filter(t => t.score < 35).length;
+            if (critCount > 2) return { label: 'Высокий', color: 'var(--danger)' };
+            if (critCount > 0) return { label: 'Средний', color: 'var(--warning)' };
+            return { label: 'Низкий', color: 'var(--success)' };
+        }
+    };
+
+    function render() {
+        const forecast = BrainLogic.calculateWeightedForecast(userStats);
+        const sortedByPriority = [...userStats.topics].sort((a,b) => BrainLogic.getPriority(b) - BrainLogic.getPriority(a));
+        
+        // 1. Прогноз
+        document.getElementById('score-range').innerText = `${forecast.min} — ${forecast.max}`;
+        const delta = Math.max(0, userStats.targetScore - forecast.max);
+        document.getElementById('goal-delta').innerHTML = delta === 0 ? "<b>Цель достигнута!</b>" : `До цели: <b>${delta} баллов</b>`;
+        
+        // Пояснение под прогнозом
+        const riskTopic = sortedByPriority[0];
+        document.getElementById('forecast-details').innerText = `Прогноз снижают: ${riskTopic.shortName.toLowerCase()} и нестабильность в глаголах.`;
+
+        // 2. Барьеры
+        document.getElementById('diagnosis-list').innerHTML = sortedByPriority.slice(0, 2).map(t => `<div class="diagnosis-item">● ${t.shortName.toLowerCase()}</div>`).join('');
+
+        // 3. Инсайт
+        const improved = userStats.topics.find(t => t.change > 10);
+        const declined = userStats.topics.find(t => t.change < -3);
+        const insightBox = document.getElementById('dynamic-insight');
+        if (improved) insightBox.innerHTML = `<span style="color: var(--success); font-weight: 700; font-size: 0.85rem;">✨ ${improved.shortName} вышли из зоны риска!</span>`;
+        else if (declined) insightBox.innerHTML = `<span style="color: var(--danger); font-weight: 700; font-size: 0.85rem;">⚠️ Внимание: ${declined.shortName} требуют возврата.</span>`;
+        else insightBox.innerHTML = `<span style="color: var(--text-muted); font-size: 0.85rem;">📈 Работаем на стабильность. Резких просадок нет.</span>`;
+
+        // 4. План
+        const mainTask = sortedByPriority[0];
+        document.getElementById('smart-task-container').innerHTML = `
+            <div class="smart-task">
+                <span class="reason-badge">${mainTask.reason}</span>
+                <h4 style="margin: 5px 0;">Фокус дня: ${mainTask.shortName}</h4>
+                <p style="font-size: 0.75rem; color: var(--text-muted); margin: 10px 0;">Занятие снизит риск просадки в блоке орфографии.</p>
+                <div class="btn-group">
+                    <button class="btn-action primary" onclick="location.href='game.html'">НАЧАТЬ (20 МИН)</button>
+                    <button class="btn-action">ОШИБКИ</button>
+                </div>
+            </div>
+        `;
+
+        // 5. Недельный Summary
+        const upCount = userStats.topics.filter(t => t.change > 0).length;
+        const sysRisk = BrainLogic.getSystemRisk(userStats.topics);
+        const avgStability = (userStats.topics.reduce((a,b)=>a+b.stability,0) / userStats.topics.length).toFixed(0);
+        
+        document.getElementById('weekly-summary').innerHTML = `
+            <div class="summary-item">Улучшено тем: <b>${upCount}</b></div>
+            <div class="summary-item">Стабильность: <b>${avgStability}%</b></div>
+            <div class="summary-item">Сильный рост: <b>${improved ? improved.shortName : '---'}</b></div>
+            <div class="summary-item">Риск системы: <b style="color:${sysRisk.color}">${sysRisk.label}</b></div>
+        `;
+
+        // 6. Карта зон с умными кнопками
+        document.getElementById('topics-list').innerHTML = userStats.topics.map(t => {
+            const status = BrainLogic.getStatus(t.score);
+            
+            let buttons = [];
+            if (t.score < 50) buttons = ['Теория', 'Тренировка', 'Блиц'];
+            else if (t.stability < 60) buttons = ['Тренировка', 'Теория', 'Блиц'];
+            else buttons = ['Блиц', 'Тренировка', 'Теория'];
+
+            return `
+                <div class="topic-row">
+                    <div class="topic-meta">
+                        <span style="font-weight: 700; font-size: 0.9rem;">${t.fullName}</span>
+                        <span class="status-pill ${status.class}">${status.label}</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <div style="flex-grow: 1;">
+                            <div style="height: 6px; background: rgba(255,255,255,0.05); border-radius: 3px; overflow: hidden; margin-bottom: 4px;">
+                                <div style="width: ${t.score}%; height: 100%; background: ${status.color};"></div>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; font-size: 0.65rem; color: var(--text-muted);">
+                                <span>Стабильность: ${t.stability}%</span>
+                                <span style="color: ${t.change >= 0 ? 'var(--success)' : 'var(--danger)'}">${t.change >= 0 ? '↑' : '↓'} ${Math.abs(t.change)}%</span>
+                            </div>
+                        </div>
+                        <span style="font-weight: 800; font-size: 0.85rem; min-width: 35px; text-align: right;">${t.score}%</span>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn-action primary" onclick="if('${t.id}'=='10') location.href='game.html'">${buttons[0]}</button>
+                        <button class="btn-action">${buttons[1]}</button>
+                        <button class="btn-action">${buttons[2]}</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    render();
+</script>
